@@ -37,9 +37,19 @@ from .core.prompts import build_judge_prompt_addition, build_reply_prompt_additi
 from .core.session import SessionManager, SessionState
 from .core.token_router_probe import TokenRouterProbe
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 _DEFAULT_DRAFT_FALLBACK = "（系统未生成草稿，请直接回复用户）"
+
+# v1.0.3 起以下配置项不再暴露给用户调节（保留代码默认行为，便于后续需要时恢复）
+_DEFAULT_JUDGE_TIMEOUT = 30
+_DEFAULT_REPLY_TIMEOUT = 120
+_DEFAULT_DAILYSHARING_PROBE_COUNT = 3
+_DEFAULT_COMMAND_PREFIXES = ["/"]
+_DEFAULT_DAYFLOW_PLUGIN_NAME = "astrbot_plugin_dayflow_life_scheduler"
+_DEFAULT_DAILYSHARING_PLUGIN_NAME = "astrbot_plugin_daily_sharing"
+_DEFAULT_CHAT_PLUS_PLUGIN_NAME = "astrbot_plugin_group_chat_plus"
+_DEFAULT_TOKEN_ROUTER_PLUGIN_NAME = "astrbot_plugin_token_router"
 
 
 @register(
@@ -53,39 +63,37 @@ class HumanlikeReplyPlugin(Star):
         super().__init__(context)
         self.config = config
 
+        # ---- 暴露给用户的配置项（7项） ----
         self.enable = bool(config.get("enable", True))
         self.judge_provider_id = str(config.get("judge_provider_id", "") or "")
         self.enable_private_chat = bool(config.get("enable_private_chat", True))
         self.enable_group_chat = bool(config.get("enable_group_chat", False))
         self.max_delay_minutes = int(config.get("max_delay_minutes", 30))
-        self.judge_timeout_seconds = int(config.get("judge_timeout_seconds", 30))
-        self.reply_timeout_seconds = int(config.get("reply_timeout_seconds", 120))
-        self.inject_dayflow_schedule = bool(config.get("inject_dayflow_schedule", True))
-        self.save_conversation_history = bool(config.get("save_conversation_history", True))
         self.no_reply_cooldown_minutes = float(config.get("no_reply_cooldown_minutes", 5.0))
-        self.debug = bool(config.get("debug", False))
-        self.dailysharing_probe_count = int(config.get("dailysharing_probe_count", 3))
-        self.chat_plus_plugin_name = str(config.get("chat_plus_plugin_name", "astrbot_plugin_group_chat_plus") or "")
-        self.auto_yield_group_chat = bool(config.get("auto_yield_group_chat_to_chat_plus", True))
         self.enable_token_router_integration = bool(config.get("enable_token_router_integration", True))
-        self.token_router_plugin_name = str(config.get("token_router_plugin_name", "astrbot_plugin_token_router") or "")
 
-        raw_prefixes = config.get("command_prefixes", ["/"])
-        if isinstance(raw_prefixes, str):
-            self.command_prefixes = [raw_prefixes]
-        elif isinstance(raw_prefixes, list):
-            self.command_prefixes = [p for p in raw_prefixes if isinstance(p, str) and p]
-        else:
-            self.command_prefixes = ["/"]
+        # ---- 以下配置项不再暴露给用户（使用默认值） ----
+        self.judge_timeout_seconds = _DEFAULT_JUDGE_TIMEOUT
+        self.reply_timeout_seconds = _DEFAULT_REPLY_TIMEOUT
+        self.inject_dayflow_schedule = True
+        self.save_conversation_history = True
+        self.debug = False
+        self.dailysharing_probe_count = _DEFAULT_DAILYSHARING_PROBE_COUNT
+        self.chat_plus_plugin_name = _DEFAULT_CHAT_PLUS_PLUGIN_NAME
+        self.auto_yield_group_chat = True
+        self.token_router_plugin_name = _DEFAULT_TOKEN_ROUTER_PLUGIN_NAME
+        self.command_prefixes = list(_DEFAULT_COMMAND_PREFIXES)
+        self._dayflow_plugin_name = _DEFAULT_DAYFLOW_PLUGIN_NAME
+        dailysharing_name = _DEFAULT_DAILYSHARING_PLUGIN_NAME
+
+        # 会话级开关：umo -> bool。优先级高于全局 self.enable
+        # 由 /拟真开 /拟真关 命令动态控制，仅影响当前会话
+        self._session_enabled: dict = {}
 
         self.session_mgr = SessionManager()
         self.session_mgr.set_delay_callback(self._on_delay_fire)
 
-        dayflow_name = str(config.get("dayflow_plugin_name", "astrbot_plugin_dayflow_life_scheduler") or "")
-        dailysharing_name = str(config.get("dailysharing_plugin_name", "astrbot_plugin_daily_sharing") or "")
         self._dailysharing_probe = DailySharingProbe(context, dailysharing_name)
-        # dayflow 不需要直接探测，通过 on_llm_request 钩子注入即可
-        self._dayflow_plugin_name = dayflow_name
 
         # token_router 集成：让本插件的 LLM 调用能被 token_router 路由与计数
         if self.enable_token_router_integration:
@@ -105,6 +113,26 @@ class HumanlikeReplyPlugin(Star):
             f"Dailysharing探测: {dailysharing_name or '禁用'} | "
             f"TokenRouter集成: {'启用' if self._token_router_probe else '禁用'}"
         )
+
+    # ------------------------------------------------------------------
+    # 命令：会话级开关
+    # ------------------------------------------------------------------
+
+    @filter.command("拟真开")
+    async def cmd_enable_session(self, event: AstrMessageEvent):
+        """临时开启当前会话的拟人回复（不影响其他会话与全局开关）。"""
+        umo = event.unified_msg_origin
+        self._session_enabled[umo] = True
+        logger.info(f"[HumanlikeReply] /拟真开 umo={umo}（全局enable={self.enable}）")
+        yield event.plain_result("✅ 拟人回复已开启（本窗口）")
+
+    @filter.command("拟真关")
+    async def cmd_disable_session(self, event: AstrMessageEvent):
+        """临时关闭当前会话的拟人回复（不影响其他会话与全局开关）。"""
+        umo = event.unified_msg_origin
+        self._session_enabled[umo] = False
+        logger.info(f"[HumanlikeReply] /拟真关 umo={umo}（全局enable={self.enable}）")
+        yield event.plain_result("⏸️ 拟人回复已关闭（本窗口）")
 
     # ------------------------------------------------------------------
     # 工具方法
@@ -273,7 +301,12 @@ class HumanlikeReplyPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=1)
     async def on_message(self, event: AstrMessageEvent):
-        if not self.enable:
+        # 会话级开关优先于全局 enable：umo 在 _session_enabled 中时用其值，否则用 self.enable
+        uid = event.unified_msg_origin
+        if uid in self._session_enabled:
+            if not self._session_enabled[uid]:
+                return
+        elif not self.enable:
             return
 
         is_group = self._is_group_event(event)
@@ -282,7 +315,6 @@ class HumanlikeReplyPlugin(Star):
         if not is_group and not self.enable_private_chat:
             return
 
-        uid = event.unified_msg_origin
         text = self._get_text(event)
         image_urls = extract_image_urls(event)
 

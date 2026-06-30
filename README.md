@@ -133,34 +133,24 @@ DayFlow 通过 `on_llm_request` 钩子向 system_prompt 注入：
 
 ## ⚙️ 主要配置项
 
+v1.0.3 起精简为 7 项核心配置，其他配置项回退到代码默认值。
+
 ### 基础开关
-- `enable`：是否启用拟人回复
-- `enable_private_chat`：是否在私聊中启用
-- `enable_group_chat`：是否在群聊中启用（按会话隔离）
-- `debug`：是否输出详细调试日志
+- `enable`：是否启用拟人回复（默认 `true`）。也可改用 `/拟真开` `/拟真关` 命令按会话临时控制
+- `enable_private_chat`：是否在私聊中启用（默认 `true`）
+- `enable_group_chat`：是否在群聊中启用（默认 `false`，按会话隔离。若安装了 chat_plus 会自动让位）
 
 ### LLM 相关
 - `judge_provider_id`：判断LLM 的 Provider ID（留空则用会话默认对话LLM）
-- `judge_timeout_seconds`：判断LLM 超时秒数（超时后兜底立即回复）
-- `reply_timeout_seconds`：对话LLM 超时秒数
 
 ### 延迟与冷却
-- `max_delay_minutes`：最大延迟分钟数
-- `no_reply_cooldown_minutes`：判断为"不回复"后的冷却分钟数（期间消息静默丢弃，避免连续判断浪费 token）
+- `max_delay_minutes`：最大延迟分钟数（默认 `30`）
+- `no_reply_cooldown_minutes`：判断为"不回复"后的冷却分钟数（默认 `5.0`，期间消息静默丢弃，避免连续判断浪费 token）
 
 ### 插件联动
-- `dayflow_plugin_name`：DayFlow 插件名（用于查找插件实例）
-- `dailysharing_plugin_name`：Dailysharing 插件名（留空则不探测冲突）
-- `dailysharing_probe_count`：探测几个未来任务
-- `inject_dayflow_schedule`：是否触发 `on_llm_request` 钩子注入日程（关闭则判断LLM 看不到日程）
-- `chat_plus_plugin_name`：ChatPlus 插件名（用于检测是否加载，默认 `astrbot_plugin_group_chat_plus`）
-- `auto_yield_group_chat_to_chat_plus`：检测到 ChatPlus 已加载且本插件开启群聊时，自动让位群聊处理给 ChatPlus（默认开启）
-- `enable_token_router_integration`：是否启用 TokenRouter 联动（v1.0.2 新增，默认开启）。开启后手动触发 token_router 的 `on_message` 与 `on_llm_response` 钩子，让路由链与用量统计对本插件生效
-- `token_router_plugin_name`：TokenRouter 插件名（默认 `astrbot_plugin_token_router`，便于改名后查找）
+- `enable_token_router_integration`：是否启用 TokenRouter 联动（v1.0.2 新增，默认 `true`）。开启后手动触发 token_router 的 `on_message` 与 `on_llm_response` 钩子，让路由链与用量统计对本插件生效
 
-### 其他
-- `command_prefixes`：指令前缀列表（以这些前缀开头的消息直接放行，不参与判断）
-- `save_conversation_history`：是否保存用户消息和 Bot 回复到对话历史
+> **被移除的配置项**（v1.0.3）：`command_prefixes`、`dayflow_plugin_name`、`dailysharing_plugin_name`、`dailysharing_probe_count`、`chat_plus_plugin_name`、`auto_yield_group_chat_to_chat_plus`、`inject_dayflow_schedule`、`save_conversation_history`、`debug`、`token_router_plugin_name`、`judge_timeout_seconds`、`reply_timeout_seconds`。如需调整这些参数，可编辑 `main.py` 顶部的 `_DEFAULT_*` 常量。
 
 ---
 
@@ -170,9 +160,16 @@ DayFlow 通过 `on_llm_request` 钩子向 system_prompt 注入：
 2. 默认只在私聊中启用，群聊需手动开启 `enable_group_chat`。
 3. 判断LLM 和对话LLM 都使用当前会话的人格提示词作为 system_prompt 主体，只是追加的任务说明不同。
 4. 如需省 token 或加快判断速度，可为 `judge_provider_id` 配置一个轻量模型。
-5. 插件会拦截所有非指令消息（以 `command_prefixes` 开头的消息直接放行）。
+5. 插件会拦截所有非指令消息（以 `/` 开头的消息直接放行）。
 6. 延迟回复期间，Bot 的消息发送通过 `context.send_message` 完成，不依赖原始事件。
 7. 若 DayFlow 未安装或未启用，判断LLM 将看不到日程信息，但仍可根据用户消息内容判断。
+
+### 🎛️ 会话级命令（v1.0.3）
+
+- `/拟真开`：临时开启当前会话（窗口）的拟人回复，不影响其他会话与全局 `enable`
+- `/拟真关`：临时关闭当前会话（窗口）的拟人回复，不影响其他会话与全局 `enable`
+
+会话级开关优先级高于全局 `enable`。重启插件后会话级状态清空，回到全局配置。
 
 ---
 

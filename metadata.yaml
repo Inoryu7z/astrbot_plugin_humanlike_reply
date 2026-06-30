@@ -1,6 +1,6 @@
 name: astrbot_plugin_humanlike_reply
 display_name: 拟人回复
-version: 1.0.2
+version: 1.0.3
 desc: 让AI像真人一样把控回复节奏：忙时延迟回复或不回复，由判断LLM拟定回复方案后交对话LLM审查优化
 author: Inoryu7z
 repo: https://github.com/Inoryu7z/astrbot_plugin_humanlike_reply

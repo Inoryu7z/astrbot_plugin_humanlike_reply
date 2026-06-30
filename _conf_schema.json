@@ -3,7 +3,7 @@
   "description": "启用拟人回复",
   "type": "bool",
   "default": true,
-  "hint": "关闭后插件将不拦截消息，AI 恢复秒回行为。",
+  "hint": "关闭后插件将不拦截消息，AI 恢复秒回行为。可改用 /拟真开 /拟真关 命令按会话临时控制。",
   "obvious_hint": true
  },
  "judge_provider_id": {
@@ -22,7 +22,7 @@
   "description": "启用群聊",
   "type": "bool",
   "default": false,
-  "hint": "是否在群聊中启用拟人回复（按会话隔离）。"
+  "hint": "是否在群聊中启用拟人回复（按会话隔离）。若安装了 chat_plus 会自动让位群聊。"
  },
  "max_delay_minutes": {
   "description": "最大延迟分钟数",
@@ -30,89 +30,17 @@
   "default": 30,
   "hint": "判断LLM可设定的单次延迟上限（分钟）。防止LLM给出过长的延迟。"
  },
- "judge_timeout_seconds": {
-  "description": "判断LLM超时(秒)",
-  "type": "int",
-  "default": 30,
-  "hint": "判断LLM调用超时时间。超时后按「立即回复」处理，避免用户久等。"
- },
- "reply_timeout_seconds": {
-  "description": "对话LLM超时(秒)",
-  "type": "int",
-  "default": 120,
-  "hint": "对话LLM（审查方案并生成最终回复）调用超时时间。"
- },
- "command_prefixes": {
-  "description": "指令前缀列表",
-  "type": "list",
-  "default": ["/"],
-  "hint": "以这些前缀开头的消息会被识别为指令，直接放行不参与判断。"
- },
- "dayflow_plugin_name": {
-  "description": "Dayflow插件名",
-  "type": "string",
-  "default": "astrbot_plugin_dayflow_life_scheduler",
-  "hint": "用于查找Dayflow插件实例以获取日程信息。如果改名了再填。"
- },
- "dailysharing_plugin_name": {
-  "description": "Dailysharing插件名",
-  "type": "string",
-  "default": "astrbot_plugin_daily_sharing",
-  "hint": "用于查找Dailysharing插件实例以探测下次主动分享时间。留空则不探测。"
- },
- "dailysharing_probe_count": {
-  "description": "探测Dailysharing任务数量",
-  "type": "int",
-  "default": 3,
-  "hint": "向判断LLM报告最近的几个Dailysharing未来任务时间。"
- },
- "inject_dayflow_schedule": {
-  "description": "注入Dayflow日程",
-  "type": "bool",
-  "default": true,
-  "hint": "是否将Dayflow日程信息拼接到判断LLM的提示词中。关闭则判断LLM看不到日程。"
- },
- "save_conversation_history": {
-  "description": "保存对话历史",
-  "type": "bool",
-  "default": true,
-  "hint": "拦截消息后是否手动保存用户消息和bot回复到对话历史。关闭会导致对话历史缺失（不推荐）。"
- },
  "no_reply_cooldown_minutes": {
   "description": "不回复冷却(分钟)",
   "type": "float",
   "default": 5.0,
   "hint": "判断LLM选择「不回复」后，该会话在此期间不再触发判断（避免连续判断浪费token）。"
  },
- "chat_plus_plugin_name": {
- "description": "ChatPlus插件名",
- "type": "string",
- "default": "astrbot_plugin_group_chat_plus",
- "hint": "用于检测ChatPlus（群聊读空气插件）是否启用。若启用且本插件开启群聊，会自动让位群聊处理给ChatPlus，避免双重决策冲突。"
-},
-"auto_yield_group_chat_to_chat_plus": {
- "description": "检测到ChatPlus时自动让位群聊",
- "type": "bool",
- "default": true,
- "hint": "开启后：若检测到ChatPlus已加载且本插件enable_group_chat=True，自动覆盖为False并告警。ChatPlus是群聊专用插件，与本插件功能重叠，建议由ChatPlus处理群聊、本插件处理私聊。关闭此项可强制共存（不推荐，会导致双重决策）。"
-},
-"enable_token_router_integration": {
- "description": "启用token_router联动",
- "type": "bool",
- "default": true,
- "hint": "开启后：手动触发token_router的on_message钩子让其设置selected_provider，本插件据此选择Provider；LLM响应后手动触发OnLLMResponseEvent让token_router记录用量。原因：本插件priority=1先于token_router(9999)执行并stop_event，导致token_router原生钩子永不触发。关闭则本插件LLM调用绕过token_router路由与计数。",
- "obvious_hint": true
-},
-"token_router_plugin_name": {
- "description": "TokenRouter插件名",
- "type": "string",
- "default": "astrbot_plugin_token_router",
- "hint": "用于查找TokenRouter插件实例。如果改了插件目录名再填。若TokenRouter未安装或未找到，本插件会静默降级（LLM调用回退到默认Provider）。"
-},
-"debug": {
- "description": "调试日志",
- "type": "bool",
- "default": false,
- "hint": "开启后输出详细的判断过程、决策、拟定方案等日志，便于调试。"
-}
+ "enable_token_router_integration": {
+  "description": "启用token_router联动",
+  "type": "bool",
+  "default": true,
+  "hint": "开启后：手动触发token_router的on_message与on_llm_response钩子，让路由链与用量统计对本插件生效。token_router未安装时静默降级。",
+  "obvious_hint": true
+ }
 }
