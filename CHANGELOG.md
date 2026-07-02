@@ -1,3 +1,16 @@
+### v1.0.4
+
+**🔧 兼容性修复：postsplitter/ttsplus 等钩子依赖插件恢复正常**
+
+**问题**：v1.0.2 的 `event.send(event.plain_result(text))` 直接发送方式绕过了框架的 `ResultDecorateStage` 和 `RespondStage`，导致 `on_decorating_result`（postsplitter 分段）和 `after_message_sent`（ttsplus 语音、thinkview）钩子链不触发。
+
+**修复**：
+* 新增 `send_reply_with_hooks`：stop_event 后手动走完整钩子链（continue_event → on_decorating_result → 发送 → after_message_sent → stop_event），等价于框架洋葱模型
+* `_send_reply_via_event` 改用 `send_reply_with_hooks`
+* `fire_on_llm_response_event` 改为无条件触发（不再依赖 token_router 开关），确保 postsplitter 的 `__post_splitter_is_llm_reply` 标记被设置
+
+---
+
 ### v1.0.3
 
 **🎛️ 会话级开关 + 配置精简**

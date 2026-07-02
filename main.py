@@ -32,12 +32,13 @@ from .core.llm_helper import (
     get_history_for_llm,
     get_persona_prompt,
     save_conversation,
+    send_reply_with_hooks,
 )
 from .core.prompts import build_judge_prompt_addition, build_reply_prompt_addition
 from .core.session import SessionManager, SessionState
 from .core.token_router_probe import TokenRouterProbe
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 _DEFAULT_DRAFT_FALLBACK = "（系统未生成草稿，请直接回复用户）"
 
@@ -598,13 +599,15 @@ class HumanlikeReplyPlugin(Star):
 
         reply, response = result
 
-        # 手动触发 OnLLMResponseEvent，让 token_router 等插件记录 token 用量
+        # 手动触发 OnLLMResponseEvent，让 token_router 记录用量、postsplitter 设置 LLM 标记
         # （本插件绕过 Pipeline，原生钩子不会自动触发）
-        if self._token_router_probe is not None:
-            try:
-                await fire_on_llm_response_event(event, response)
-            except Exception as e:
-                self._dlog(f"uid={uid} 触发 OnLLMResponseEvent 失败: {e}")
+        # v1.0.4 起：无条件触发，不再依赖 token_router 集成开关。
+        # 原因：postsplitter 的 on_llm_response 会设置 __post_splitter_is_llm_reply 标记，
+        # 该标记是 send_reply_with_hooks → on_decorating_result 中 postsplitter 分段的前提。
+        try:
+            await fire_on_llm_response_event(event, response)
+        except Exception as e:
+            self._dlog(f"uid={uid} 触发 OnLLMResponseEvent 失败: {e}")
 
         if not reply:
             logger.warning(f"uid={uid} 对话LLM审查返回空，使用draft作为最终回复")
@@ -649,11 +652,11 @@ class HumanlikeReplyPlugin(Star):
             else:
                 reply, response = result
                 final_reply = reply or "（我暂时无法回复）"
-                if self._token_router_probe is not None:
-                    try:
-                        await fire_on_llm_response_event(event, response)
-                    except Exception as e:
-                        self._dlog(f"uid={uid} 兜底路径触发 OnLLMResponseEvent 失败: {e}")
+                # v1.0.4 起：无条件触发（同 _conversation_llm_review）
+                try:
+                    await fire_on_llm_response_event(event, response)
+                except Exception as e:
+                    self._dlog(f"uid={uid} 兜底路径触发 OnLLMResponseEvent 失败: {e}")
         except Exception as e:
             logger.error(f"uid={uid} 兜底回复失败: {e}")
             final_reply = "……"
@@ -821,9 +824,15 @@ class HumanlikeReplyPlugin(Star):
     # ------------------------------------------------------------------
 
     async def _send_reply_via_event(self, event: AstrMessageEvent, text: str) -> None:
-        """通过原event发送回复（立即回复场景）。"""
+        """通过原event发送回复（立即回复场景）。
+
+        v1.0.4 起：改用 ``send_reply_with_hooks`` 走完整钩子链
+        （on_decorating_result → 发送 → after_message_sent），
+        让 postsplitter/ttsplus 等依赖钩子的插件生效。
+        失败时回退到 ``_send_reply_via_umo``。
+        """
         try:
-            await event.send(event.plain_result(text))
+            await send_reply_with_hooks(event, text)
         except Exception as e:
             logger.error(f"[HumanlikeReply] 通过event发送失败: {e}")
             # 尝试通过umo兜底

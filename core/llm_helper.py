@@ -302,6 +302,85 @@ async def call_llm_with_response(
         return None
 
 
+async def send_reply_with_hooks(event, text: str) -> None:
+    """设置 result + 手动触发 on_decorating_result + 发送 + 手动触发 after_message_sent。
+
+    v1.0.4 起替代 ``event.send(event.plain_result(text))`` 的直接发送方式。
+
+    问题背景：本插件 ``stop_event()`` 后用 ``event.send()`` 直接发送，
+    绕过了框架的 ``ResultDecorateStage`` 和 ``RespondStage``，导致：
+    1. ``on_decorating_result`` 钩子不触发 → postsplitter 等分段插件不生效
+    2. ``after_message_sent`` 钩子不触发 → ttsplus 等语音插件不生效
+
+    修复策略（洋葱模型的等价手动实现）：
+    1. ``set_result`` 设置回复内容
+    2. ``continue_event`` 临时恢复传播（让 ``call_event_hook`` 中的 ``is_stopped`` 检查通过）
+    3. 手动调 ``call_event_hook(OnDecoratingResultEvent)`` → postsplitter 处理分段
+    4. ``event.send(result)`` 发送处理后的 result（postsplitter 会把最后一段留在 result.chain）
+    5. 手动调 ``call_event_hook(OnAfterMessageSentEvent)`` → ttsplus/thinkview 等处理
+    6. ``stop_event`` 重新终止，防止调度器继续执行后续 Stage
+
+    前置条件：``fire_on_llm_response_event`` 必须在本方法之前调用，
+    以便 postsplitter 的 ``on_llm_response`` 设置 ``__post_splitter_is_llm_reply`` 标记，
+    否则 postsplitter 的 ``on_decorating_result`` 会认为不是 LLM 回复而跳过。
+    """
+    if event is None:
+        logger.warning("[HumanlikeReply] send_reply_with_hooks: event 为 None，跳过")
+        return
+
+    try:
+        from astrbot.core.pipeline.context_utils import call_event_hook
+        from astrbot.core.star.star_handler import EventType
+    except ImportError:
+        # 框架版本过旧，回退到直接发送
+        logger.debug("[HumanlikeReply] 无法导入 call_event_hook，回退到直接 event.send")
+        try:
+            await event.send(event.plain_result(text))
+        except Exception as e:
+            logger.error(f"[HumanlikeReply] 回退发送失败: {e}")
+        return
+
+    # 1. 设置 result
+    result = event.plain_result(text)
+    event.set_result(result)
+
+    # 2. 临时恢复传播（call_event_hook 内部会检查 is_stopped）
+    event.continue_event()
+
+    try:
+        # 3. 手动触发 on_decorating_result（让 postsplitter 等处理 result.chain）
+        try:
+            await call_event_hook(event, EventType.OnDecoratingResultEvent)
+        except Exception as e:
+            logger.debug(f"[HumanlikeReply] on_decorating_result 钩子链异常: {e}")
+
+        # 如果装饰钩子中又被 stop_event，恢复一下以便继续发送
+        if event.is_stopped():
+            event.continue_event()
+
+        # 4. 发送处理后的 result
+        #    postsplitter 会把最后一段留在 result.chain，前置分段自己发送
+        current_result = event.get_result()
+        if current_result and current_result.chain:
+            try:
+                await event.send(current_result)
+            except Exception as e:
+                logger.error(f"[HumanlikeReply] 发送 result 失败: {e}")
+        else:
+            logger.debug("[HumanlikeReply] result.chain 为空，跳过发送（可能已被钩子完全处理）")
+
+        # 5. 手动触发 after_message_sent（让 ttsplus/thinkview 等处理）
+        if event.is_stopped():
+            event.continue_event()
+        try:
+            await call_event_hook(event, EventType.OnAfterMessageSentEvent)
+        except Exception as e:
+            logger.debug(f"[HumanlikeReply] after_message_sent 钩子链异常: {e}")
+    finally:
+        # 6. 重新终止事件传播，防止调度器继续执行后续 Stage
+        event.stop_event()
+
+
 async def save_conversation(context, uid: str, user_text: str, assistant_text: str, image_urls: list = None) -> None:
     """保存用户消息和bot回复到对话历史。参考premerger的_save_conversation。"""
     try:
