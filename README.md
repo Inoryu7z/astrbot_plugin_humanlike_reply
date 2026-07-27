@@ -134,18 +134,11 @@ DayFlow 通过 `on_llm_request` 钩子向 system_prompt 注入：
 
 ### 🔗 钩子链完整性（v1.0.4）
 
-本插件通过 `provider.text_chat()` 绕过 Pipeline 直接调 LLM，并在 `on_message` 中 `stop_event()`。这导致两个问题：
+本插件需要绕过框架的消息发送流程来控制回复时机，这导致 v1.0.4 之前 postsplitter / ttsplus / thinkview 等依赖框架消息发送流程的插件在本插件下**完全不生效**——长消息不会被分段、回复不会被转语音、思考过程也不会被记录。
 
-1. **`event.send()` 直接发送**绕过了框架的 `ResultDecorateStage` 和 `RespondStage`，使依赖 `on_decorating_result`（postsplitter 分段）和 `after_message_sent`（ttsplus 语音、thinkview 思考记录）的钩子链完全不触发
-2. **`OnLLMResponseEvent` 不触发**，使 postsplitter 的 `__post_splitter_is_llm_reply` 标记未被设置，分段逻辑失效
+**v1.0.4 修复**：立即回复路径重新接入框架的完整消息发送流程，上述插件对本插件的最终回复**全部生效**。
 
-**v1.0.4 修复**：
-- 立即回复路径改用 `send_reply_with_hooks`：在 `stop_event` 后**手动走完整钩子链**（`continue_event → on_decorating_result → 发送 → after_message_sent → stop_event`），等价于框架洋葱模型
-- `fire_on_llm_response_event` 改为**无条件触发**（不再依赖 token_router 集成开关），确保 postsplitter 标记被设置
-
-修复后，postsplitter / ttsplus / thinkview 等依赖钩子的插件对本插件的最终回复**全部生效**。
-
-> ⚠️ **延迟回复路径**通过 `context.send_message` 发送（原 event 可能已失效），无法走 `after_message_sent` 钩子。这意味着延迟回复**不会**触发 ttsplus 语音合成、thinkview 思考记录捕获。如需这些钩子生效，请避免使用延迟回复（或将 `max_delay_minutes` 设为较小值）。
+> ⚠️ **延迟回复路径**仍受限制：延迟回复通过另一条通道发送（原消息事件可能已失效），无法触发上述插件。也就是说，如果判断LLM 决定延迟回复，那条回复**不会**被 postsplitter 分段、不会被 ttsplus 转语音、也不会被 thinkview 记录。如需这些插件生效，可适当调小 `max_delay_minutes` 减少延迟回复的发生。
 
 ---
 
