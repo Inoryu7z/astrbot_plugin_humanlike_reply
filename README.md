@@ -81,6 +81,9 @@
 | `astrbot_plugin_daily_sharing` | 提供下次主动分享时间，让延迟回复不会与主动分享冲突 |
 | `astrbot_plugin_daymind` | 通过 `on_llm_request` 钩子注入心情、思考状态，让回复更贴合当前心理状态 |
 | `astrbot_plugin_token_router` | 多 Provider 按窗口路由 + 用量限制（v1.0.2 起联动）。本插件会手动触发其钩子，让路由链与用量统计对本插件的 LLM 调用生效 |
+| `astrbot_plugin_postsplitter` | 长消息分段发送（v1.0.4 起联动）。本插件立即回复路径走完整钩子链，postsplitter 的 `on_decorating_result` 分段对最终回复生效 |
+| `astrbot_plugin_tts_plus` | TTS 语音合成（v1.0.4 起联动）。本插件立即回复路径触发 `after_message_sent` 钩子，ttsplus 的语音合成对最终回复生效 |
+| `astrbot_plugin_thinkview` | 思考记录捕获（v1.0.4 起联动）。本插件立即回复路径触发 `OnLLMResponseEvent` 与 `after_message_sent` 钩子，thinkview 能正常记录本插件的 LLM 推理过程 |
 
 ### 🔗 DayFlow 协同
 
@@ -128,6 +131,21 @@ DayFlow 通过 `on_llm_request` 钩子向 system_prompt 注入：
 **降级行为**：token_router 未安装时所有探测方法静默 no-op，不影响主流程。
 
 **关闭联动**：将 `enable_token_router_integration` 设为 `false`，本插件 LLM 调用将完全绕过 token_router（不推荐，会导致用量统计缺失）。
+
+### 🔗 钩子链完整性（v1.0.4）
+
+本插件通过 `provider.text_chat()` 绕过 Pipeline 直接调 LLM，并在 `on_message` 中 `stop_event()`。这导致两个问题：
+
+1. **`event.send()` 直接发送**绕过了框架的 `ResultDecorateStage` 和 `RespondStage`，使依赖 `on_decorating_result`（postsplitter 分段）和 `after_message_sent`（ttsplus 语音、thinkview 思考记录）的钩子链完全不触发
+2. **`OnLLMResponseEvent` 不触发**，使 postsplitter 的 `__post_splitter_is_llm_reply` 标记未被设置，分段逻辑失效
+
+**v1.0.4 修复**：
+- 立即回复路径改用 `send_reply_with_hooks`：在 `stop_event` 后**手动走完整钩子链**（`continue_event → on_decorating_result → 发送 → after_message_sent → stop_event`），等价于框架洋葱模型
+- `fire_on_llm_response_event` 改为**无条件触发**（不再依赖 token_router 集成开关），确保 postsplitter 标记被设置
+
+修复后，postsplitter / ttsplus / thinkview 等依赖钩子的插件对本插件的最终回复**全部生效**。
+
+> ⚠️ **延迟回复路径**通过 `context.send_message` 发送（原 event 可能已失效），无法走 `after_message_sent` 钩子。这意味着延迟回复**不会**触发 ttsplus 语音合成、thinkview 思考记录捕获。如需这些钩子生效，请避免使用延迟回复（或将 `max_delay_minutes` 设为较小值）。
 
 ---
 
@@ -178,5 +196,7 @@ v1.0.3 起精简为 7 项核心配置，其他配置项回退到代码默认值�
 - [ ] 支持配置多个判断LLM Provider（按人格切换）
 - [ ] 群聊场景优化（区分@消息与普通消息，未安装 chat_plus 时生效）
 - [x] 与 chat_plus 的兼容性支持（自动让位群聊）
+- [x] 与 postsplitter / ttsplus / thinkview 的钩子链联动（v1.0.4 起立即回复路径生效）
 - [ ] 延迟回复期间的用户消息累积提示（让对话LLM 知道用户发了多条消息）
+- [ ] 延迟回复路径的钩子链完整性（目前延迟回复无法触发 after_message_sent 钩子）
 - [ ] 与 premerger 的兼容性支持
